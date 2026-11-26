@@ -11,7 +11,7 @@ A read-only investor dashboard. Clients log in (no sign-up) and see balance, tra
    npx supabase start
    npx supabase db reset
    ```
-   `db reset` runs every file under `supabase/migrations/` in filename order against the local Supabase stack. It drops and recreates the local database, so use it only for local development. The migration sequence creates the schema, visit logs, consent flow and role/consent hardening, including the profile backfill and PostgREST schema reload notification.
+   `db reset` runs every file under `supabase/migrations/` in filename order against the local Supabase stack. It drops and recreates the local database, so use it only for local development. The migration sequence creates the schema, visit logs, consent flow, role/consent hardening, and grants the SQL privileges needed to reach existing RLS policies.
 3. To apply migrations to a new hosted Supabase project, get the project reference from its dashboard, then run:
    ```sh
    npx supabase login
