@@ -3,7 +3,7 @@ name: Unzip Uploaded File
 on:
   push:
     paths:
-      - '**.zip'
+      - '**/*.zip'
 
 jobs:
   unzip:
@@ -14,12 +14,18 @@ jobs:
       - uses: actions/checkout@v4
       - name: Unzip and clean up
         run: |
-          unzip -o "*.zip"
-          rm -f *.zip
+          while IFS= read -r -d '' archive; do
+            unzip -o "$archive" -d "$(dirname "$archive")"
+            rm -- "$archive"
+          done < <(find . -type f -name '*.zip' -not -path './.git/*' -print0)
       - name: Commit extracted files
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add .
+          if git diff --cached --quiet; then
+            echo "No extracted changes to commit."
+            exit 0
+          fi
           git commit -m "Extract zip contents"
           git push
