@@ -14,6 +14,10 @@ export default function Landing() {
     supabase.from('news').select('*').eq('published', true).eq('visibility', 'public')
       .order('published_at', { ascending: false }).limit(6)
       .then(({ data }) => setNews(data || []))
+      .catch((error) => {
+        console.error('Failed to load public news.', error)
+        setNews([])
+      })
   }, [])
 
   return (

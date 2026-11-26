@@ -10,10 +10,19 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session)
-      if (!data.session) setLoading(false)
-    })
+    const restoreSession = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession()
+        if (error) throw error
+        setSession(data.session)
+      } catch (error) {
+        console.error('Failed to restore authentication session.', error)
+        setSession(null)
+      } finally {
+        setLoading(false)
+      }
+    }
+    restoreSession()
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
       setSession(s)
       if (!s) { setProfile(null); setLoading(false) }
@@ -23,13 +32,26 @@ export function AuthProvider({ children }) {
 
   const uid = session?.user?.id
   const fetchProfile = async () => {
-    const { data } = await supabase.from('profiles').select('*').eq('id', uid).maybeSingle()
-    setProfile(data)
+    try {
+      const { data, error } = await supabase.from('profiles').select('*').eq('id', uid).maybeSingle()
+      if (error) throw error
+      setProfile(data)
+    } catch (error) {
+      console.error('Failed to load user profile.', error)
+      setProfile(null)
+    }
   }
   useEffect(() => {
     if (!uid) return
     setLoading(true)
-    fetchProfile().then(() => setLoading(false))
+    const loadProfile = async () => {
+      try {
+        await fetchProfile()
+      } finally {
+        setLoading(false)
+      }
+    }
+    loadProfile()
   }, [uid])
 
   const signIn = (email, password) => supabase.auth.signInWithPassword({ email, password })

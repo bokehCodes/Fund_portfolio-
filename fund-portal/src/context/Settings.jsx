@@ -20,13 +20,20 @@ export function SettingsProvider({ children }) {
   const [settings, setSettings] = useState(null)
 
   const load = async () => {
-    const { data } = await supabase.from('site_settings').select('*').eq('id', 1).maybeSingle()
-    const s = data || {}
-    s.palette = { ...PRESETS.midnight, ...(s.palette || {}) }
-    s.services = Array.isArray(s.services) ? s.services : []
-    applyPalette(s.palette)
-    document.title = s.site_name || 'Portal'
-    setSettings(s)
+    let s = {}
+    try {
+      const { data, error } = await supabase.from('site_settings').select('*').eq('id', 1).maybeSingle()
+      if (error) throw error
+      s = data || {}
+    } catch (error) {
+      console.error('Failed to load site settings; using defaults.', error)
+    } finally {
+      s.palette = { ...PRESETS.midnight, ...(s.palette || {}) }
+      s.services = Array.isArray(s.services) ? s.services : []
+      applyPalette(s.palette)
+      document.title = s.site_name || 'Portal'
+      setSettings(s)
+    }
   }
   useEffect(() => { load() }, [])
 
