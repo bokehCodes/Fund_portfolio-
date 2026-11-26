@@ -45,6 +45,32 @@ You may ask to access, correct or delete your information, object to marketing, 
 If we change this policy in a significant way we will ask you to review and sign it again.$policy$
 where id = 1 and privacy_policy is null;
 
+create or replace function public.has_current_consent() returns boolean
+language sql stable security definer set search_path = public, pg_temp as $$
+  select exists (
+    select 1
+      from public.profiles p
+     where p.id = auth.uid()
+       and p.consent_at is not null
+       and p.consent_version >= coalesce(
+         (select s.privacy_version from public.site_settings s where s.id = 1), 1
+       )
+  );
+$$;
+revoke all on function public.has_current_consent() from public, anon;
+grant execute on function public.has_current_consent() to authenticated;
+
+-- Consent must be current before clients can read account data or client news.
+drop policy if exists "tx read own or admin" on public.transactions;
+create policy "tx read own or admin" on public.transactions for select
+  using (public.is_admin() or (user_id = auth.uid() and public.has_current_consent()));
+drop policy if exists "holdings read own or admin" on public.holdings;
+create policy "holdings read own or admin" on public.holdings for select
+  using (public.is_admin() or (user_id = auth.uid() and public.has_current_consent()));
+drop policy if exists "news clients read" on public.news;
+create policy "news clients read" on public.news for select to authenticated
+  using (public.is_admin() or (published and public.has_current_consent()));
+
 -- 2. Audit trail of every sign / withdraw
 create table if not exists public.consent_events (
   id uuid primary key default gen_random_uuid(),
@@ -59,29 +85,97 @@ drop policy if exists "consent events read" on public.consent_events;
 create policy "consent events read" on public.consent_events for select
   using (user_id = auth.uid() or public.is_admin());
 
+create or replace function public.protect_profile_sensitive_fields() returns trigger
+language plpgsql set search_path = public, pg_temp as $$
+declare
+  v_is_admin boolean := public.is_admin();
+begin
+  if auth.uid() is null then
+    if tg_op = 'DELETE' then return old; end if;
+    return new;
+  end if;
+
+  if tg_op = 'DELETE' then
+    if old.role = 'admin' then
+      if old.id = auth.uid() then
+        raise exception 'Administrators cannot delete their own account';
+      end if;
+      perform pg_advisory_xact_lock(1346454349, 1);
+      if (select count(*) from public.profiles where role = 'admin') <= 1 then
+        raise exception 'The last administrator cannot be deleted';
+      end if;
+    end if;
+    return old;
+  end if;
+
+  if new.role is distinct from old.role and not v_is_admin then
+    raise exception 'Only an administrator can change profile roles';
+  end if;
+
+  if old.role = 'admin' and old.id = auth.uid() and new.role <> 'admin' then
+    raise exception 'Administrators cannot demote their own account';
+  end if;
+
+  if new.role is distinct from old.role and old.role = 'admin' and new.role <> 'admin' then
+    perform pg_advisory_xact_lock(1346454349, 1);
+    if (select count(*) from public.profiles where role = 'admin') <= 1 then
+      raise exception 'The last administrator cannot be demoted';
+    end if;
+  end if;
+
+  if (new.consent_at is distinct from old.consent_at
+      or new.consent_name is distinct from old.consent_name
+      or new.consent_version is distinct from old.consent_version)
+     and not v_is_admin
+     and not (
+       current_setting('app.allow_profile_consent_update', true) = 'on'
+       and new.id = auth.uid()
+       and new.role is not distinct from old.role
+     ) then
+    raise exception 'Consent fields can only be changed through the consent functions';
+  end if;
+
+  return new;
+end;
+$$;
+drop trigger if exists profiles_protect_sensitive_fields on public.profiles;
+create trigger profiles_protect_sensitive_fields
+  before update or delete on public.profiles
+  for each row execute function public.protect_profile_sensitive_fields();
+
 -- 3. Functions the app calls (clients cannot edit their profile directly)
 create or replace function public.accept_consent(p_name text) returns void
-language plpgsql security definer set search_path = public as $$
-declare v int;
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare
+  v int;
+  v_policy text;
 begin
   if auth.uid() is null then raise exception 'Not signed in'; end if;
   if coalesce(trim(p_name), '') = '' then raise exception 'Please type your full name'; end if;
-  select coalesce(privacy_version, 1) into v from public.site_settings where id = 1;
+  select privacy_policy, coalesce(privacy_version, 1) into v_policy, v
+    from public.site_settings where id = 1;
+  if coalesce(trim(v_policy), '') = '' then
+    raise exception 'The privacy policy is empty and cannot be signed';
+  end if;
+  perform set_config('app.allow_profile_consent_update', 'on', true);
   update public.profiles
      set consent_at = now(), consent_name = trim(p_name), consent_version = v
    where id = auth.uid();
+  if not found then raise exception 'Account profile not found'; end if;
   insert into public.consent_events (user_id, action, signed_name, policy_version)
   values (auth.uid(), 'accepted', trim(p_name), v);
 end; $$;
 
 create or replace function public.withdraw_consent() returns void
-language plpgsql security definer set search_path = public as $$
+language plpgsql security definer set search_path = public, pg_temp as $$
 begin
   if auth.uid() is null then raise exception 'Not signed in'; end if;
+  perform set_config('app.allow_profile_consent_update', 'on', true);
   insert into public.consent_events (user_id, action, signed_name, policy_version)
   select id, 'withdrawn', consent_name, consent_version from public.profiles where id = auth.uid();
   update public.profiles set consent_at = null, consent_name = null, consent_version = null
    where id = auth.uid();
+  if not found then raise exception 'Account profile not found'; end if;
 end; $$;
 
 revoke all on function public.accept_consent(text) from public, anon;
@@ -95,5 +189,5 @@ drop policy if exists "visits insert consented" on public.visit_logs;
 create policy "visits insert consented" on public.visit_logs for insert to authenticated
   with check (
     user_id = auth.uid()
-    and exists (select 1 from public.profiles p where p.id = auth.uid() and p.consent_at is not null)
+    and public.has_current_consent()
   );

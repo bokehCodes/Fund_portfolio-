@@ -5,14 +5,36 @@ A read-only investor dashboard. Clients log in (no sign-up) and see balance, tra
 ## 1. Supabase (database + login)
 
 1. Go to supabase.com, then **New project**. Save the database password somewhere safe.
-2. Open **SQL Editor → New query**, paste the full contents of `supabase/schema.sql`, and click **Run**.
-3. Open **Authentication → Sign In / Providers** (or "Providers → Email") and turn **OFF** "Allow new users to sign up". This is what makes it login-only.
-4. Open **Authentication → Users → Add user → Create new user**. Enter YOUR email and a password, and tick **Auto Confirm User**. This will be the admin.
-5. Back in **SQL Editor**, run this (replace the email):
+2. In **SQL Editor → New query**, run each complete SQL file, in this exact order:
+   1. `supabase/schema.sql`
+   2. `supabase/visit_logs.sql`
+   3. `supabase/consent.sql`
+   4. `supabase/fix_roles_and_consent.sql`
+
+   The last file backfills missing profiles, protects role and consent fields, installs the consent RPCs and RLS policies, and ends with `NOTIFY pgrst, 'reload schema';` to refresh PostgREST's schema cache. If PostgREST still reports a missing function, run this in the SQL Editor and wait briefly before retrying:
    ```sql
-   update public.profiles set role = 'admin' where email = 'you@example.com';
+   NOTIFY pgrst, 'reload schema';
    ```
-6. Open **Project Settings → API** and copy the **Project URL** and the **anon public** key. You need them in step 3.
+3. Open **Authentication → Sign In / Providers** (or **Providers → Email**) and turn **OFF** "Allow new users to sign up". This keeps the portal login-only.
+4. Open **Authentication → Users → Add user → Create new user**. Create your own account, enter a password, and tick **Auto Confirm User**. New users always start as `client`.
+5. Promote the first administrator in **SQL Editor** with an exact email match and a `WHERE` clause. Replace the email, run the query, and verify the resulting role:
+   ```sql
+   update public.profiles
+   set role = 'admin'
+   where lower(email) = lower('you@example.com')
+     and role = 'client';
+
+   select email, role
+   from public.profiles
+   where lower(email) = lower('you@example.com');
+   ```
+   Never run a role update without a `WHERE` clause. After the first administrator is established, promote additional admins only from **Admin → Clients** while signed in as an existing admin.
+6. To diagnose unexpected admin access, inspect the current roles:
+   ```sql
+   select email, role from public.profiles order by email;
+   ```
+   If unintended accounts are marked `admin`, demote them using a carefully verified email condition that preserves the intended administrator. Do not copy/run a bulk update until its `WHERE` clause is correct.
+7. Open **Project Settings → API** and copy the **Project URL** and the **anon public** key. You need them in step 3.
 
 ## 2. GitHub (code storage)
 
@@ -49,8 +71,8 @@ A read-only investor dashboard. Clients log in (no sign-up) and see balance, tra
 
 ## Privacy policy, signed consent and visit logging
 
-1. In Supabase **SQL Editor**, run these two files in order: `supabase/visit_logs.sql`, then `supabase/consent.sql`. (If you already ran an earlier `visit_logs.sql` with the banner version, just run `consent.sql`; it replaces the old insert rule.)
-2. Upload the new files to GitHub; Vercel redeploys by itself. No new environment variables.
+1. Make sure all four SQL files in the exact order above have been run. In particular, `fix_roles_and_consent.sql` creates the `accept_consent` function and sends the schema-cache reload notification.
+2. Upload the updated files to GitHub; Vercel redeploys by itself. No new environment variables.
 3. **Edit the policy** in Admin → Site & design → Privacy policy. It is a template with [brackets]; have a lawyer review it before go-live.
 4. Clients have no sign-up. The first time a client logs in (after you create their account) they must read the policy, tick the box, type their full name as a signature, and press **Sign and continue**. They cannot reach their dashboard until they do. "Decline" signs them out.
 5. The signature (name, date, policy version) is stored and shown in Admin → Clients. Changing the policy and ticking "make every client sign again" forces re-signing.
@@ -61,6 +83,9 @@ Location comes from Vercel's connection data (city-level, approximate) and works
 
 ## Security notes
 
-- Clients can only read their own rows. Only admin accounts can write. This is enforced in the database, not only in the screens.
+- New accounts default to `client`; only an existing admin can promote accounts in **Admin → Clients**. The first admin is promoted once in SQL Editor with a tightly scoped `WHERE` clause.
+- Clients can only read their own transactions and holdings after accepting the current policy. Only admin accounts can write transactions, holdings, news, and site settings. These rules are enforced in the database, not only in the screens.
+- The site-assets storage bucket and public site settings/public news are intentionally publicly readable; only admins can write site assets or settings.
 - The anon key in the browser is meant to be public. Never put the Supabase `service_role` key into Vercel or GitHub.
+- Never run `UPDATE public.profiles SET role = ...` without a verified `WHERE` clause. Never leave the diagnostic bulk-demotion query uncommented with an unverified email.
 - Password resets: Supabase → Authentication → Users → the user → send password recovery, or set a new password.

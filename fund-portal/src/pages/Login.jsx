@@ -4,7 +4,7 @@ import { useAuth } from '../context/Auth'
 import { useSettings } from '../context/Settings'
 
 export default function Login() {
-  const { signIn } = useAuth()
+  const { signIn, signOut } = useAuth()
   const { settings: s } = useSettings()
   const nav = useNavigate()
   const [email, setEmail] = useState('')
@@ -15,10 +15,18 @@ export default function Login() {
   const submit = async (e) => {
     e.preventDefault()
     setBusy(true); setErr('')
-    const { error } = await signIn(email.trim(), password)
+    const { error, profile } = await signIn(email.trim(), password)
+    if (error) {
+      setBusy(false)
+      return setErr('Invalid email or password.')
+    }
+    if (!profile) {
+      await signOut()
+      setBusy(false)
+      return setErr('Your account profile is unavailable. Please contact your account manager.')
+    }
     setBusy(false)
-    if (error) return setErr('Invalid email or password.')
-    nav('/dashboard')
+    nav(profile.role === 'admin' ? '/admin' : '/dashboard')
   }
 
   return (

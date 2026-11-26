@@ -31,14 +31,20 @@ export function AuthProvider({ children }) {
   }, [])
 
   const uid = session?.user?.id
-  const fetchProfile = async () => {
+  const fetchProfile = async (userId = uid) => {
+    if (!userId) {
+      setProfile(null)
+      return null
+    }
     try {
-      const { data, error } = await supabase.from('profiles').select('*').eq('id', uid).maybeSingle()
+      const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle()
       if (error) throw error
       setProfile(data)
+      return data
     } catch (error) {
       console.error('Failed to load user profile.', error)
       setProfile(null)
+      return null
     }
   }
   useEffect(() => {
@@ -54,9 +60,14 @@ export function AuthProvider({ children }) {
     loadProfile()
   }, [uid])
 
-  const signIn = (email, password) => supabase.auth.signInWithPassword({ email, password })
+  const signIn = async (email, password) => {
+    const result = await supabase.auth.signInWithPassword({ email, password })
+    if (result.error) return result
+    const profile = await fetchProfile(result.data.user.id)
+    return { ...result, profile }
+  }
   const signOut = () => supabase.auth.signOut()
-  const refreshProfile = () => (uid ? fetchProfile() : Promise.resolve())
+  const refreshProfile = () => fetchProfile(uid)
 
   return <Ctx.Provider value={{ session, profile, loading, signIn, signOut, refreshProfile }}>{children}</Ctx.Provider>
 }

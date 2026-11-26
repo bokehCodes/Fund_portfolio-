@@ -14,12 +14,23 @@ const consented = (profile, settings) =>
   !!profile?.consent_at && (profile.consent_version || 0) >= (settings.privacy_version || 1)
 
 function Guard({ children, admin }) {
-  const { session, profile, loading } = useAuth()
+  const { session, profile, loading, signOut } = useAuth()
   const { settings } = useSettings()
   if (loading) return <div className="center">Loading…</div>
   if (!session) return <Navigate to="/login" replace />
+  if (!profile) {
+    return (
+      <div className="center">
+        <div className="card">
+          <h2>Account profile unavailable</h2>
+          <p className="muted">Your account profile could not be found. Please contact your account manager.</p>
+          <button className="btn" onClick={signOut}>Sign out</button>
+        </div>
+      </div>
+    )
+  }
   if (!consented(profile, settings)) return <ConsentGate />
-  if (admin && profile?.role !== 'admin') return <Navigate to="/dashboard" replace />
+  if (admin && profile.role !== 'admin') return <Navigate to="/dashboard" replace />
   return children
 }
 

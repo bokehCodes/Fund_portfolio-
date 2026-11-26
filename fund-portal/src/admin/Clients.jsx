@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useSettings } from '../context/Settings'
+import { useAuth } from '../context/Auth'
 import { money, stats, CLASS_LABEL, TYPE_LABEL } from '../lib/util'
 import TxTable from '../components/TxTable'
 
@@ -47,6 +48,7 @@ export default function Clients() {
 const today = () => new Date().toISOString().slice(0, 10)
 
 function ClientDetail({ client, onBack }) {
+  const { profile: currentProfile } = useAuth()
   const { settings: s } = useSettings()
   const cur = s.currency || 'USD'
   const [p, setP] = useState(client)
@@ -54,6 +56,7 @@ function ClientDetail({ client, onBack }) {
   const [holdings, setHoldings] = useState([])
   const [tx, setTx] = useState({ type: 'profit', asset_class: 'bonds', asset_name: '', amount: '', occurred_on: today(), note: '' })
   const [h, setH] = useState({ asset_class: 'bonds', asset_name: '', invested: '', current_value: '' })
+  const [roleBusy, setRoleBusy] = useState(false)
 
   const load = async () => {
     const [t, hh] = await Promise.all([
@@ -67,6 +70,31 @@ function ClientDetail({ client, onBack }) {
   const saveProfile = async () => {
     const { error } = await supabase.from('profiles').update({ full_name: p.full_name, account_ref: p.account_ref }).eq('id', p.id)
     alert(error ? error.message : 'Saved')
+  }
+
+  const changeRole = async (role) => {
+    if (role === p.role || roleBusy) return
+    if (p.id === currentProfile?.id && role !== 'admin') {
+      alert('You cannot demote your own administrator account.')
+      return
+    }
+    if (p.role === 'admin' && role === 'client') {
+      const { count, error } = await supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'admin')
+      if (error) return alert(`Could not verify the administrator count: ${error.message}`)
+      if (count <= 1) return alert('The last administrator cannot be demoted.')
+    }
+    if (!confirm(`Change ${p.email} from ${p.role} to ${role}?`)) return
+
+    setRoleBusy(true)
+    try {
+      const { data, error } = await supabase.from('profiles').update({ role }).eq('id', p.id).select('*').single()
+      if (error) return alert(error.message)
+      setP(data)
+    } catch (error) {
+      alert(error.message || 'Could not change the account role.')
+    } finally {
+      setRoleBusy(false)
+    }
   }
 
   const addTx = async (e) => {
@@ -117,6 +145,11 @@ function ClientDetail({ client, onBack }) {
             <input value={p.full_name || ''} onChange={(e) => setP({ ...p, full_name: e.target.value })} /></div>
           <div className="field"><label>Account reference</label>
             <input value={p.account_ref || ''} onChange={(e) => setP({ ...p, account_ref: e.target.value })} /></div>
+          <div className="field"><label>Role</label>
+            <select value={p.role} disabled={roleBusy} onChange={(e) => changeRole(e.target.value)}>
+              <option value="client">Client</option>
+              <option value="admin">Admin</option>
+            </select></div>
         </div>
         <button className="btn small" onClick={saveProfile}>Save</button>
         <p className="muted small">
