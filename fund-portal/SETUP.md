@@ -5,19 +5,30 @@ A read-only investor dashboard. Clients log in (no sign-up) and see balance, tra
 ## 1. Supabase (database + login)
 
 1. Go to supabase.com, then **New project**. Save the database password somewhere safe.
-2. In **SQL Editor → New query**, run each complete SQL file, in this exact order:
-   1. `supabase/schema.sql`
-   2. `supabase/visit_logs.sql`
-   3. `supabase/consent.sql`
-   4. `supabase/fix_roles_and_consent.sql`
-
-   The last file backfills missing profiles, protects role and consent fields, installs the consent RPCs and RLS policies, and ends with `NOTIFY pgrst, 'reload schema';` to refresh PostgREST's schema cache. If PostgREST still reports a missing function, run this in the SQL Editor and wait briefly before retrying:
-   ```sql
-   NOTIFY pgrst, 'reload schema';
+2. Use the Supabase CLI from the `fund-portal` directory to apply migrations. Install Docker Desktop and make sure it is running first:
+   ```sh
+   npx supabase init
+   npx supabase start
+   npx supabase db reset
    ```
-3. Open **Authentication → Sign In / Providers** (or **Providers → Email**) and turn **OFF** "Allow new users to sign up". This keeps the portal login-only.
-4. Open **Authentication → Users → Add user → Create new user**. Create your own account, enter a password, and tick **Auto Confirm User**. New users always start as `client`.
-5. Promote the first administrator in **SQL Editor** with an exact email match and a `WHERE` clause. Replace the email, run the query, and verify the resulting role:
+   `db reset` runs every file under `supabase/migrations/` in filename order against the local Supabase stack. It drops and recreates the local database, so use it only for local development. The migration sequence creates the schema, visit logs, consent flow and role/consent hardening, including the profile backfill and PostgREST schema reload notification.
+3. To apply migrations to a new hosted Supabase project, get the project reference from its dashboard, then run:
+   ```sh
+   npx supabase login
+   npx supabase link --project-ref YOUR_PROJECT_REF
+   npx supabase db push
+   ```
+   Do not use `db push` on a project where the old SQL files were already run manually until its migration history is repaired. If all four old scripts were fully applied, link the project and mark these exact versions as applied, one at a time:
+   ```sh
+   npx supabase migration repair --status applied 20261126221100
+   npx supabase migration repair --status applied 20261126221101
+   npx supabase migration repair --status applied 20261126221102
+   npx supabase migration repair --status applied 20261126221103
+   ```
+   Then `npx supabase db push` will apply only future migrations. If any old script was not fully applied, do not mark it as applied; reconcile the database state first. If PostgREST still reports a missing function, run `NOTIFY pgrst, 'reload schema';` in the Supabase SQL Editor and wait briefly before retrying.
+4. Open **Authentication → Sign In / Providers** (or **Providers → Email**) and turn **OFF** "Allow new users to sign up". This keeps the portal login-only.
+5. Open **Authentication → Users → Add user → Create new user**. Create your own account, enter a password, and tick **Auto Confirm User**. New users always start as `client`.
+6. Promote the first administrator in **SQL Editor** with an exact email match and a `WHERE` clause. Replace the email, run the query, and verify the resulting role:
    ```sql
    update public.profiles
    set role = 'admin'
@@ -29,12 +40,12 @@ A read-only investor dashboard. Clients log in (no sign-up) and see balance, tra
    where lower(email) = lower('you@example.com');
    ```
    Never run a role update without a `WHERE` clause. After the first administrator is established, promote additional admins only from **Admin → Clients** while signed in as an existing admin.
-6. To diagnose unexpected admin access, inspect the current roles:
+7. To diagnose unexpected admin access, inspect the current roles:
    ```sql
    select email, role from public.profiles order by email;
    ```
    If unintended accounts are marked `admin`, demote them using a carefully verified email condition that preserves the intended administrator. Do not copy/run a bulk update until its `WHERE` clause is correct.
-7. Open **Project Settings → API** and copy the **Project URL** and the **anon public** key. You need them in step 3.
+8. Open **Project Settings → API** and copy the **Project URL** and the **anon public** key. You need them in step 3.
 
 ## 2. GitHub (code storage)
 
@@ -71,7 +82,7 @@ A read-only investor dashboard. Clients log in (no sign-up) and see balance, tra
 
 ## Privacy policy, signed consent and visit logging
 
-1. Make sure all four SQL files in the exact order above have been run. In particular, `fix_roles_and_consent.sql` creates the `accept_consent` function and sends the schema-cache reload notification.
+1. Make sure all four migrations have been applied. In particular, the final migration creates `accept_consent` and sends the schema-cache reload notification.
 2. Upload the updated files to GitHub; Vercel redeploys by itself. No new environment variables.
 3. **Edit the policy** in Admin → Site & design → Privacy policy. It is a template with [brackets]; have a lawyer review it before go-live.
 4. Clients have no sign-up. The first time a client logs in (after you create their account) they must read the policy, tick the box, type their full name as a signature, and press **Sign and continue**. They cannot reach their dashboard until they do. "Decline" signs them out.

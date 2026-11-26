@@ -1,4 +1,4 @@
--- Run this whole file once in Supabase > SQL Editor.
+-- Initial schema migration: profiles, site settings, portfolio data, RLS, and storage.
 
 create extension if not exists pgcrypto;
 

@@ -1,4 +1,4 @@
--- Run once in Supabase > SQL Editor (after schema.sql).
+-- Visit logs migration (runs after initial_schema).
 
 create table if not exists public.visit_logs (
   id uuid primary key default gen_random_uuid(),

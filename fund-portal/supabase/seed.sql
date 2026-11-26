@@ -1,0 +1,1 @@
+-- No development seed data is required for this portal.
